@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Playback tools</title>
+    <link rel="stylesheet" href="popup.css">
+    <script src="popup.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <p class="extension-name">Paramount Menu Remover</p>
+      <h1>Playback tools</h1>
+      <p id="connection" data-state="waiting">Connecting to player…</p>
+    </header>
+
+    <main>
+      <section class="playback-section" aria-label="Current playback">
+        <dl class="playback-stats">
+          <div><dt>Playing at</dt><dd id="resolution">—</dd></div>
+          <div class="bitrate-stat"><dt>Stream bitrate</dt><dd id="bitrate" data-pending="true">Waiting</dd></div>
+        </dl>
+        <p class="hint" id="stats-source">Start a video to see stream details.</p>
+      </section>
+
+      <section class="quality-section" aria-label="Quality controls">
+        <fieldset id="quality-mode">
+          <legend>Quality preference</legend>
+          <div class="mode-options">
+            <label><input type="radio" name="quality-mode" value="auto" checked><span>Auto</span></label>
+            <label><input type="radio" name="quality-mode" value="max"><span>Keep sharp</span></label>
+            <label><input type="radio" name="quality-mode" value="manual" id="manual-option" disabled><span>Manual</span></label>
+          </div>
+        </fieldset>
+        <div id="manual-controls" hidden>
+          <div class="field"><label for="preferred-height">Resolution</label><select id="preferred-height"></select></div>
+          <div class="field"><label for="preferred-bandwidth">Target bitrate</label><select id="preferred-bandwidth"></select></div>
+        </div>
+        <p class="hint" id="quality-hint">Auto lets the player adapt to your connection.</p>
+        <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
+      </section>
+
+      <section class="menu-section" aria-labelledby="menu-heading">
+        <label class="toggle-row" for="menu-toggle">
+          <span><span class="control-title" id="menu-heading">Hide playback menu</span>
+            <span class="control-description">Keep the sidebar off your video.</span></span>
+          <input type="checkbox" id="menu-toggle" role="switch" checked>
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+      </section>
+      <section class="appearance-section" aria-labelledby="appearance-heading">
+        <label class="toggle-row" for="dark-mode-toggle">
+          <span class="control-title" id="appearance-heading">Dark mode</span>
+          <input type="checkbox" id="dark-mode-toggle" role="switch">
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+      </section>
+    </main>
+    <footer>
+      <span>Saved automatically.<br>Quality may take 10–20 seconds to change.</span>
+      <button id="reload-player" type="button" disabled>Reload player</button>
+    </footer>
+  </body>
+</html>

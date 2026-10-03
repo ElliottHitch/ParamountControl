@@ -1,18 +1,46 @@
 {
   "manifest_version": 3,
   "name": "Paramount Menu Remover",
-  "version": "1.0.0",
-  "description": "Removes on-screen overlay/menu elements from Paramount playback pages.",
+  "version": "1.2.0",
+  "description": "Toggle the Paramount+ playback menu and control streaming resolution and bitrate.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "*://www.paramountplus.com/*",
+    "*://paramountplus.com/*"
+  ],
+  "action": {
+    "default_title": "Paramount controls",
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": [
         "*://www.paramountplus.com/*",
         "*://paramountplus.com/*"
       ],
-      "js": [
-        "content.js"
+      "js": ["quality/bitrate-meter.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://www.paramountplus.com/*",
+        "*://paramountplus.com/*"
       ],
-      "run_at": "document_idle"
+      "js": [
+        "content.js",
+        "quality-bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["quality/*.js"],
+      "matches": [
+        "*://www.paramountplus.com/*",
+        "*://paramountplus.com/*"
+      ]
     }
   ]
 }
