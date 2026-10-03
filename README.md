@@ -6,16 +6,16 @@ A Chrome and Edge extension for Paramount+.
 
 ### Menu removal
 
-Removes the video sidebar when it appears. Turn the switch off to bring the menu back.
+  Removes the video sidebar when it appears. Turn the switch off to bring the menu back.
 
 ### Quality selection
 
 Paramount lists the qualities available for each video. The extension limits
 which ones the player can choose. The player still downloads and plays the original streams.
 
-- **Auto:** lets the player choose from the full list.
-- **Keep sharp:** keeps the highest compatible choices.
-- **Manual:** keeps your chosen resolution and the closest available bitrate, where supported.
+  - **Auto:** lets the player choose from the full list.
+  - **Keep sharp:** keeps the highest compatible choices.
+  - **Manual:** keeps your chosen resolution and the closest available bitrate, where supported.
 
 Settings are saved automatically. Changing quality reloads the player. If playback
 fails after a quality selection, it reloads once into Auto and stays there for the current title.
