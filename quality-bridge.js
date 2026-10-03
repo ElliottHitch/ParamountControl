@@ -12,6 +12,9 @@
   let injectionError = false;
   let appliedConfig = null;
   let settingsLoaded = false;
+  let policy = { applied: false, reason: "waiting" };
+  let recoveryRecord = null;
+  let pendingRecovery = null;
 
   function positiveNumber(value) {
     const number = Number(value);
@@ -34,26 +37,53 @@
 
   function getConfig() {
     const manual = settings.qualityMode === "manual" && !recovering;
-    const candidates = qualities.filter((quality) => quality.height === settings.preferredHeight);
-    const selected = settings.preferredBandwidth && candidates.length
-      ? candidates.reduce((closest, quality) =>
-          Math.abs(quality.bandwidth - settings.preferredBandwidth) < Math.abs(closest.bandwidth - settings.preferredBandwidth)
-            ? quality : closest)
-      : candidates[0];
     return {
       forceMax: settings.qualityMode === "max" && !recovering,
-      forcedId: manual ? selected?.id || null : null,
       forcedHeight: manual ? settings.preferredHeight : null,
       forcedBandwidth: manual ? settings.preferredBandwidth : null
     };
   }
 
-  function applyConfig() {
+  function clearRecovery() {
+    recovering = false;
+    recoveryRecord = null;
+    try { sessionStorage.removeItem(RECOVERY_KEY); } catch { /* In-memory state still clears. */ }
+  }
+
+  function restoreRecovery() {
+    try {
+      const stored = sessionStorage.getItem(RECOVERY_KEY);
+      // Migrate the old one-reload marker into a persistent per-title fallback.
+      recoveryRecord = stored === "1"
+        ? { url: location.href, preference: JSON.stringify(settings) }
+        : JSON.parse(stored || "null");
+      recovering = Boolean(recoveryRecord && recoveryRecord.url === location.href &&
+        recoveryRecord.preference === JSON.stringify(settings));
+      if (recovering) sessionStorage.setItem(RECOVERY_KEY, JSON.stringify(recoveryRecord));
+      else clearRecovery();
+    } catch { clearRecovery(); }
+  }
+
+  function recoverPlayback(detail) {
+    if (!settingsLoaded) { pendingRecovery = detail; return; }
+    if (recovering || settings.qualityMode === "auto") return;
+    recovering = true;
+    recoveryRecord = { url: location.href, preference: JSON.stringify(settings), reason: detail };
+    applyConfig();
+    try {
+      sessionStorage.setItem(RECOVERY_KEY, JSON.stringify(recoveryRecord));
+      location.reload();
+    } catch { /* Stay in Auto; without a persistent marker, do not reload. */ }
+  }
+
+  function applyConfig(force = false) {
     if (!settingsLoaded) return;
-    appliedConfig = getConfig();
+    const next = getConfig();
+    const changed = JSON.stringify(next) !== JSON.stringify(appliedConfig);
+    appliedConfig = next;
     // Preserve the latest choice for a reload before asynchronous storage loads.
     try { sessionStorage.setItem(PENDING_CONFIG_KEY, JSON.stringify(appliedConfig)); } catch { /* The page message still applies it. */ }
-    window.postMessage({ type: "PMR_QUALITY_CONFIG", payload: appliedConfig }, location.origin);
+    if (changed || force) window.postMessage({ type: "PMR_QUALITY_CONFIG", payload: appliedConfig }, location.origin);
   }
 
   function resetStream(key) {
@@ -62,6 +92,11 @@
     sample = {};
     measuredBitrate = null;
     observationSequence = 0;
+    policy = { applied: false, reason: "waiting" };
+    if (recovering && recoveryRecord?.url !== location.href) {
+      clearRecovery();
+      applyConfig();
+    }
   }
 
   function normalizeQualities(payload) {
@@ -77,15 +112,20 @@
     }).sort((a, b) => b.height - a.height || b.bandwidth - a.bandwidth).slice(0, 100);
   }
 
-  function getSnapshot() {
-    const video = Array.from(document.querySelectorAll("video"))
+  function getVideo() {
+    return Array.from(document.querySelectorAll("video"))
       .filter((item) => item.readyState >= 2 && item.videoHeight > 0)
       .sort((a, b) => Number(a.paused) - Number(b.paused) ||
         b.videoWidth * b.videoHeight - a.videoWidth * a.videoHeight)[0];
+  }
+
+  function getSnapshot() {
+    const video = getVideo();
     const decodedHeight = video?.videoHeight || null;
     const matches = qualities.filter((quality) => quality.height === decodedHeight);
-    let bitrate = positiveNumber(sample.bitrate);
-    let bitrateSource = bitrate ? "stream" : null;
+    const freshSample = video?.paused || Date.now() - (sample.timestamp || 0) < 45000;
+    let bitrate = freshSample ? positiveNumber(sample.bitrate) : null;
+    let bitrateSource = bitrate ? sample.bitrateSource || "stream" : null;
     const sampleHeight = Number.parseInt(sample.resolution, 10);
     if (decodedHeight && Number.isFinite(sampleHeight) && sampleHeight !== decodedHeight) {
       bitrate = null;
@@ -116,6 +156,7 @@
       decoded: Boolean(decodedHeight),
       playbackDetected: Boolean(video),
       recovering,
+      policy,
       injectionError,
       manualAvailable: qualities.some((quality) => quality.height === settings.preferredHeight),
       appliedConfig,
@@ -136,6 +177,14 @@
       if (nextKey) streamKey = nextKey;
       qualities = next;
       applyConfig();
+    } else if (type === "PMR_QUALITY_POLICY_DATA") {
+      const config = payload?.config;
+      const current = getConfig();
+      const matchesConfig = config && config.forceMax === current.forceMax &&
+        config.forcedHeight === current.forcedHeight && config.forcedBandwidth === current.forcedBandwidth;
+      if (matchesConfig && ["auto", "unsupported", "partial", "selected", "malformed"].includes(payload.reason)) {
+        policy = { applied: payload.applied === true, reason: payload.reason };
+      }
     } else if (type === "PMR_QUALITY_MEASURED_BITRATE") {
       if (!payload || !positiveNumber(payload.bitrate) || !positiveNumber(payload.timestamp)) return;
       measuredBitrate = { bitrate: positiveNumber(payload.bitrate),
@@ -152,15 +201,11 @@
         observationSequence = payload.observationSequence;
       }
       sample = { resolution: typeof payload.resolution === "string" ? payload.resolution : null,
-        bitrate: positiveNumber(payload.bitrate), isEstimated: Boolean(payload.isEstimated) };
-    } else if (type === "PMR_QUALITY_ORIGINAL_STREAM_RECOVERY" && !recovering && settings.qualityMode !== "auto") {
-      recovering = true;
-      applyConfig();
-      // Recover once in Auto; do not create an endless reload/forcing loop.
-      try {
-        sessionStorage.setItem(RECOVERY_KEY, "1");
-        location.reload();
-      } catch { /* Stay in Auto if recovery cannot survive a reload. */ }
+        bitrate: positiveNumber(payload.bitrate), isEstimated: Boolean(payload.isEstimated),
+        timestamp: positiveNumber(payload.timestamp) || Date.now(),
+        bitrateSource: payload.bitrateSource === "manifest" ? "manifest" : "stream" };
+    } else if (type === "PMR_QUALITY_ORIGINAL_STREAM_RECOVERY") {
+      recoverPlayback(typeof payload?.detail === "string" ? payload.detail : "playback-error");
     }
   });
 
@@ -170,9 +215,11 @@
     } else if (request.type === "PMR_APPLY_QUALITY") {
       settings = normalizeSettings(request.settings || DEFAULTS);
       settingsLoaded = true;
-      recovering = false;
+      clearRecovery();
+      policy = { applied: false, reason: "waiting" };
       applyConfig();
-      const reload = Boolean(request.reloadLivePlayback && isLivePlayback());
+      // Start with a fresh manifest and let the player initialize its own tracks.
+      const reload = Boolean((request.reloadPlayback || request.reloadLivePlayback) && (getVideo() || qualities.length));
       respond({ applied: true, reloading: reload });
       if (reload) {
         try { sessionStorage.setItem(PENDING_CONFIG_KEY, JSON.stringify(appliedConfig)); } catch { /* Saved preferences will load on restart. */ }
@@ -186,29 +233,32 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !Object.keys(DEFAULTS).some((key) => key in changes)) return;
+    const previous = JSON.stringify(settings);
     for (const key of Object.keys(DEFAULTS)) {
       if (key in changes) settings[key] = changes[key].newValue ?? DEFAULTS[key];
     }
     settings = normalizeSettings(settings);
-    recovering = false;
+    if (JSON.stringify(settings) === previous) return;
+    clearRecovery();
     applyConfig();
   });
 
-  chrome.storage.local.get(DEFAULTS, (saved) => {
+  chrome.storage.local.get(DEFAULTS, (saved = DEFAULTS) => {
     settings = normalizeSettings(saved);
     settingsLoaded = true;
-    try {
-      recovering = sessionStorage.getItem(RECOVERY_KEY) === "1";
-      if (recovering) sessionStorage.removeItem(RECOVERY_KEY);
-      sessionStorage.setItem(PENDING_CONFIG_KEY, JSON.stringify(getConfig()));
-    } catch { /* The onload message also supplies configuration. */ }
+    restoreRecovery();
     applyConfig();
+    if (pendingRecovery) {
+      const detail = pendingRecovery;
+      pendingRecovery = null;
+      recoverPlayback(detail);
+    }
   });
 
   const script = document.createElement("script");
   script.type = "module";
   script.src = chrome.runtime.getURL("quality/index.js");
-  script.onload = () => { applyConfig(); script.remove(); };
+  script.onload = () => { applyConfig(true); script.remove(); };
   script.onerror = () => { injectionError = true; script.remove(); };
   if (document.documentElement) document.documentElement.append(script);
   else document.addEventListener("DOMContentLoaded", () => document.documentElement.append(script), { once: true });

@@ -107,19 +107,27 @@ function renderPlayback(state) {
 function renderQualityStatus(state) {
   let message = "";
   if (state.injectionError) message = "The quality controller could not load. Reload the Paramount+ page to retry.";
-  else if (state.recovering) message = "The stream rejected forced quality. Playback returned to Auto for this session. Choose a quality mode to retry.";
+  else if (state.recovering) message = "Playback failed after a quality change. Auto is active for this title. Select Auto, then your preferred mode to retry.";
   else if (settings.qualityMode === "manual" && qualities.length && !state.manualAvailable) {
     message = `This stream does not offer ${settings.preferredHeight}p. Playing in Auto; your preference is saved.`;
   } else if (settings.qualityMode === "manual" && !qualities.length) {
     message = "Waiting for the available qualities. Playback stays in Auto until your saved resolution is offered.";
+  } else if (settings.qualityMode !== "auto" && ["unsupported", "malformed"].includes(state.policy?.reason)) {
+    message = "This stream does not expose compatible quality choices. Its original player settings are preserved.";
+  } else if (settings.qualityMode !== "auto" && state.policy?.reason === "partial") {
+    message = "Your preference applies to compatible video tracks. Other tracks keep their original choices.";
+  } else if (settings.qualityMode !== "auto" && state.policy?.reason === "auto") {
+    message = "Reload the player to apply your saved quality preference.";
+  } else if (settings.qualityMode !== "auto" && state.policy?.reason === "waiting") {
+    message = "Waiting for a compatible stream manifest. Your preference is saved.";
   } else if (Date.now() < feedbackUntil) message = feedback;
   showNotice(message);
   const modeHint = settings.qualityMode === "max"
-    ? "Keep sharp requests the highest quality this stream offers."
+    ? "Keep sharp selects the highest compatible quality advertised by this stream."
     : settings.qualityMode === "manual"
       ? "Choose from this stream's available resolutions and bitrates."
       : "Auto lets the player adapt to your connection.";
-  ui["quality-hint"].textContent = `${modeHint}${state.isLive ? " Changing live quality may reload playback once." : ""}`;
+  ui["quality-hint"].textContent = `${modeHint} Changing quality reloads playback once.`;
 }
 
 function renderState(state) {
@@ -178,11 +186,11 @@ async function saveQuality(next) {
     if (activeTabId !== null && connected) {
       try {
         const response = await chrome.tabs.sendMessage(activeTabId, {
-          type: "PMR_APPLY_QUALITY", settings: selected, reloadLivePlayback: true
+          type: "PMR_APPLY_QUALITY", settings: selected, reloadPlayback: true
         });
         setFeedback(response?.reloading
-          ? "Reloading live playback with your selected quality."
-          : "Quality saved. Buffered video may take 10–20 seconds to change.");
+          ? "Reloading playback with your selected quality."
+          : "Quality saved for the next playback.");
       } catch {
         setFeedback("Quality saved. Refresh Paramount+ to apply it to this player.");
       }

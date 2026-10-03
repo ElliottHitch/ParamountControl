@@ -3,7 +3,6 @@
 // the parsed list of available representations from the active manifest.
 export const DEFAULT_CONFIG = Object.freeze({
   forceMax: false,
-  forcedId: null,
   forcedHeight: null,
   forcedBandwidth: null
 });
@@ -14,7 +13,6 @@ export function normalizeConfig(value = {}) {
   const forcedBandwidth = Number(source.forcedBandwidth);
   return {
     forceMax: Boolean(source.forceMax),
-    forcedId: typeof source.forcedId === 'string' && source.forcedId ? source.forcedId : null,
     forcedHeight: Number.isFinite(forcedHeight) && forcedHeight > 0 ? forcedHeight : null,
     forcedBandwidth: Number.isFinite(forcedBandwidth) && forcedBandwidth > 0 ? forcedBandwidth : null
   };
@@ -52,11 +50,6 @@ export function setRepresentations(reps, context = {}) {
     family: context.family ?? reps[0]?.family ?? streamSession.family,
     manifestUrl: context.manifestUrl ?? streamSession.manifestUrl
   };
-}
-
-export function clearRepresentations() {
-  availableRepresentations = [];
-  streamSession = { key: null, family: null, manifestUrl: null };
 }
 
 export function getStreamSession() {

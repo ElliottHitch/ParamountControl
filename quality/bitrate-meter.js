@@ -32,7 +32,7 @@
 
   MediaSource.prototype.addSourceBuffer = function (mime) {
     const buffer = originalAddBuffer.apply(this, arguments);
-    const type = String(mime).toLowerCase();
+    const type = typeof mime === 'string' ? mime.toLowerCase() : '';
     if (type.startsWith('video/')) {
       buffers.set(buffer, {
         source: this,
@@ -52,10 +52,18 @@
     const before = ranges(this);
     const buffer = this;
     let failed = false;
-    const onError = () => { failed = true; };
+    const onAbort = () => { failed = true; };
+    const onError = () => {
+      failed = true;
+      const sourceUrl = sourceUrls.get(info.source);
+      if (!sourceUrl) return;
+      try {
+        window.postMessage({ type: 'PMR_QUALITY_BUFFER_ERROR', payload: { sourceUrl } }, location.origin);
+      } catch { /* Observation must not affect native buffer handling. */ }
+    };
     const cleanup = () => {
       buffer.removeEventListener('error', onError);
-      buffer.removeEventListener('abort', onError);
+      buffer.removeEventListener('abort', onAbort);
       buffer.removeEventListener('updateend', onEnd);
     };
     const onEnd = () => {
@@ -78,7 +86,7 @@
       } }, location.origin);
     };
     buffer.addEventListener('error', onError);
-    buffer.addEventListener('abort', onError);
+    buffer.addEventListener('abort', onAbort);
     buffer.addEventListener('updateend', onEnd);
     try {
       return originalAppend.apply(this, arguments);

@@ -6,10 +6,6 @@ export function isProgramManifest(url) {
         /^\/ondemand\/(?:hls|dash)\/content\/[^/]+\/vid\/[^/]+\/[a-z0-9_-]+\/streams\/[^/]+\/(?:[^/]+\/)*(?:[^/]+\.(?:m3u8|mpd))$/i.test(url.pathname);
 }
 
-export function isProgramPlaylist(url) {
-  return isProgramManifest(url) && /\.m3u8$/i.test(url.pathname);
-}
-
 const DAI_VARIANT_PATTERN = /\/variant\/([^/]+)\/bandwidth\/(\d+)\.m3u8/i;
 
 const EXCLUDED_PATH_MARKERS = [
@@ -73,9 +69,7 @@ export function classifyMediaRequest(url) {
   const isAd = !isDaiPlaylist && !isProgramManifest(urlObj) && isAdReference(lower);
   const isManifest = /\.(?:mpd|m3u8)(?:$|\?)/i.test(urlObj.toString());
   const isSegment = /\.(?:m4s|m4v|mp4|ts)(?:$|\?)/i.test(urlObj.toString());
-  // DAI media can be served from event playlists, stitched program CDNs, or
-  // ad-pod paths such as /linear/pods/v1/. None of those player-owned segment
-  // requests are safe candidates for speculative extension prefetching.
+  // Stitched Google DAI segments can contain ads, so omit them from telemetry.
   const isGoogleDaiMedia = urlObj.hostname.toLowerCase() === 'dai.google.com' && isSegment;
   const filename = urlObj.pathname.slice(urlObj.pathname.lastIndexOf('/') + 1);
   const isInitialization = /(?:^|[_-])init(?:[_-][^.]*)?\.(?:m4s|m4v|mp4)$/i.test(filename);
@@ -142,50 +136,9 @@ export function normalizeRepresentations(representations, context = {}) {
         family,
         streamKey,
         mediaType: rep.mediaType || 'video',
-        source: rep.source || 'manifest',
-        request: rep.request || {
-          variantUrl: rep.variantUrl || null,
-          daiId: rep.daiId || null,
-          hlsTier: rep.hlsTier || null,
-          template: rep.template || null,
-          initialization: rep.initialization || null,
-          baseUrl: rep.baseUrl || null,
-          rawId: rep.rawId || null,
-          pathId: rep.pathId || null,
-          dashTier: rep.dashTier || null
-        }
+        source: rep.source || 'manifest'
       };
     })
     .filter(rep => rep.mediaType === 'video')
     .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bandwidth || 0) - (a.bandwidth || 0));
-}
-
-export function selectRepresentation(representations, config) {
-  if (!representations.length) return null;
-  if (config.forcedId || config.forcedHeight) {
-    const forcedHeight = parseInt(config.forcedHeight, 10);
-    const exactId = representations.find(rep => rep.id === config.forcedId);
-    if (exactId && (!Number.isFinite(forcedHeight) || exactId.height === forcedHeight)) return exactId;
-    if (Number.isFinite(forcedHeight)) {
-      return representations.find(rep => rep.height === forcedHeight) || null;
-    }
-    return null;
-  }
-  return config.forceMax ? representations[0] : null;
-}
-
-export function mergeRuntimeTelemetry(targetUrl, currentUrl) {
-  const target = toUrl(targetUrl, currentUrl);
-  const current = toUrl(currentUrl);
-  if (!target || !current) return targetUrl;
-
-  const cmcd = current.searchParams.get('CMCD');
-  if (cmcd && !target.searchParams.has('CMCD')) target.searchParams.set('CMCD', cmcd);
-  return target.toString();
-}
-
-export function getDaiVariantParts(url) {
-  const urlObj = url instanceof URL ? url : toUrl(url);
-  const match = urlObj?.pathname.match(DAI_VARIANT_PATTERN);
-  return match ? { id: match[1], bandwidth: match[2] } : null;
 }

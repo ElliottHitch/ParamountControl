@@ -1,19 +1,23 @@
 # Quality engine attribution
 
-Except for the locally written `bitrate-meter.js`, the JavaScript modules in
-this directory are adapted from
+Manifest discovery, stream classification, configuration, and diagnostics in
+this directory contain code adapted from
 [Paramount Quality+](https://github.com/Chaseos/ParamountQualityPlus), by Chaseos / Chaseos Apps.
 Upstream commit: `444d7f309c275d2651d9995293c22f132e95b3f0`.
 The upstream `package.json` declares the ISC license.
 
-Local changes namespace the page bridge, remove geolocation requests, unused
-entry-point exports, and retry/prefetch features, and add a remembered bitrate
-preference within the selected resolution. All advertised bitrate variants are
-exposed to the popup, and selection keeps the player's compatibility boundaries.
-The popup design, menu toggle, and byte-count/media-duration bitrate meter are
-local implementations. The upstream popup, styles, and promotional assets are
-not included. Local fixes also preserve same-resolution HLS bitrate variants and
-register XHR observation listeners once per request object.
+The popup design, menu toggle, page bridge, manifest selection policy, transport
+hooks, recovery controller, and byte-count/media-duration bitrate meter are local
+implementations. The upstream popup, styles, and promotional assets are not
+included.
+
+The current engine selects only advertised video entries in DASH manifests and
+HLS master playlists. It preserves media URLs and separates codec, protection,
+AdaptationSet, and HLS rendition groups. Guessed VOD ladders and media request
+rewriting have been removed. Fatal media failures after a selection can trigger
+one Auto reload; the local bridge remembers the fallback for that title.
+There are no geolocation requests, extension download retries, or speculative
+prefetches. All advertised bitrate variants remain available to the local popup.
 
 ## ISC license
 

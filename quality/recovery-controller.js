@@ -1,48 +1,19 @@
-// Adapted from Paramount Quality+ (ISC). See NOTICE.md.
-const RECOVERY_FAILURE_THRESHOLD = 2;
+// Local recovery for failures after a modified manifest reached the player.
+import { getConfig, setConfig } from './state.js';
 
-// Owns recovery state for one injected playback session. Keeping this policy
-// independent of fetch/XHR interception makes the failure threshold and
-// new-content reset behavior directly testable.
-export function createRecoveryController({ canFallbackToOriginal, postRecovery, recordDiagnosticEvent, recordCheckpoint }) {
-  let recoveryRequested = false;
-  const committedFailureCounts = new Map();
-
-  function failureKey(plan) {
-    return plan?.streamKey || plan?.rejectionKey || 'unknown';
-  }
-
-  function requestRecovery(plan, detail = null) {
-    if (recoveryRequested || canFallbackToOriginal(plan)) return false;
-
-    const key = failureKey(plan);
-    const failureCount = (committedFailureCounts.get(key) || 0) + 1;
-    committedFailureCounts.set(key, failureCount);
-    if (failureCount < RECOVERY_FAILURE_THRESHOLD) {
-      recordDiagnosticEvent('recovery_deferred', { failureCount, detail });
-      recordCheckpoint('recovery_deferred', plan, { failureCount, detail });
-      return false;
-    }
-
-    recoveryRequested = true;
-    recordCheckpoint('recovery_requested', plan, { failureCount, detail });
-    postRecovery({
-      streamKey: plan?.streamKey || null,
-      strategy: plan?.strategy || null,
-      detail
-    });
+export function createRecoveryController({ postRecovery, recordDiagnosticEvent }) {
+  let applied = false;
+  let requested = false;
+  function markApplied() { applied = true; }
+  function requestRecovery(detail) {
+    const config = getConfig();
+    if (!applied || requested || (!config.forceMax && !config.forcedHeight)) return false;
+    requested = true;
+    setConfig({});
+    recordDiagnosticEvent('quality_recovery', { detail });
+    postRecovery({ detail });
     return true;
   }
-
-  function recordRewriteSuccess(plan) {
-    const key = plan?.streamKey || plan?.rejectionKey;
-    if (key) committedFailureCounts.delete(key);
-  }
-
-  function reset() {
-    committedFailureCounts.clear();
-    recoveryRequested = false;
-  }
-
-  return { requestRecovery, recordRewriteSuccess, reset };
+  function reset() { applied = false; requested = false; }
+  return { markApplied, requestRecovery, reset };
 }

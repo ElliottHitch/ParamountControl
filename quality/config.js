@@ -17,7 +17,7 @@ export function consumePendingConfig(storage = null) {
     setConfig(normalized);
     recordPlaybackCheckpoint('configuration_restored', {
       forceMax: normalized.forceMax,
-      hasManualSelection: Boolean(normalized.forcedId || normalized.forcedHeight)
+      hasManualSelection: Boolean(normalized.forcedHeight)
     });
     return normalized;
   } catch (error) {
@@ -27,7 +27,7 @@ export function consumePendingConfig(storage = null) {
 }
 
 // Listen for configuration messages from the extension UI and persist them in
-// module state so other helpers (rewriter, network hooks) always read the
+// module state so manifest selection and network hooks always read the
 // latest settings.
 export function initConfigListener() {
   window.addEventListener('message', (event) => {
@@ -37,7 +37,7 @@ export function initConfigListener() {
       setConfig(config);
       recordPlaybackCheckpoint('configuration_applied', {
         forceMax: config.forceMax,
-        hasManualSelection: Boolean(config.forcedId || config.forcedHeight)
+        hasManualSelection: Boolean(config.forcedHeight)
       });
     }
   });

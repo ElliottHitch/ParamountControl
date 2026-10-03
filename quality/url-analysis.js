@@ -1,198 +1,55 @@
-// Adapted from Paramount Quality+ (ISC). See NOTICE.md.
-import { estimateResolutionFromBitrate } from './constants.js';
-import { extractResolutionFromPath, isSegmentUrl } from './url-utils.js';
+// Adapted stream telemetry from Paramount Quality+ (ISC). See NOTICE.md.
+// Read original requests only; never infer a selectable rendition from a URL.
+import { extractResolutionFromPath } from './url-utils.js';
 import { getRepresentations } from './state.js';
 import { classifyMediaRequest, deriveStreamKey } from './stream-model.js';
 
-function matchRepresentationByBitrate(representations, bitrateKbps) {
-  if (!bitrateKbps) return null;
-
-  const bitrateBps = bitrateKbps * 1000;
-  const candidates = representations
-    .filter(rep => Number.isFinite(rep.bandwidth) && rep.bandwidth > 0)
-    .map(rep => ({ rep, difference: Math.abs(rep.bandwidth - bitrateBps) }))
-    .sort((a, b) => a.difference - b.difference);
-  const closest = candidates[0];
-  if (!closest) return null;
-
-  // CMCD bitrate values are rounded and can differ slightly from the MPD's
-  // BANDWIDTH value. Keep the match tight enough to avoid confusing adjacent
-  // representations while still accepting normal rounding difference.
-  const tolerance = Math.max(75000, closest.rep.bandwidth * 0.05);
-  return closest.difference <= tolerance ? closest.rep : null;
+function positiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
 }
 
-function toNumber(value) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-export function analyzeUrl(url, options = {}) {
+export function analyzeUrl(url, { observationSequence } = {}) {
   try {
-    if (!isSegmentUrl(url)) return;
-
     const request = classifyMediaRequest(url);
-    if (!request.url || request.excluded) return;
-    const urlObj = request.url;
-    const pathname = urlObj.pathname;
-
-    const targetHeight = toNumber(options.targetHeight);
-    const targetBitrateKbps = toNumber(options.targetBitrateKbps);
-    const targetSource = options.targetSource || options.source;
-
-    const cmcdParam = urlObj.searchParams.get('CMCD');
-
-    const availableRepresentations = getRepresentations().flatMap(rep => rep.variants || [rep]);
-    const resolutionMatch = extractResolutionFromPath(pathname);
-    const pathResolution = toNumber(resolutionMatch);
-
-    let resolution = null;
+    if (request.kind !== 'segment' || request.excluded || request.isInitialization) return;
+    const pathname = request.url.pathname;
+    const representations = getRepresentations().flatMap(rep => rep.variants || [rep]);
+    const pathResolution = extractResolutionFromPath(pathname);
+    const dashTier = pathname.match(/_(\d{2,6})\/(?:seg_|init)/i)?.[1];
+    const hlsTier = pathname.match(/manifest(?:_video)?_(\d+)[_\/]/i)?.[1];
+    const directoryMatches = representations.filter(rep =>
+      (dashTier && rep.dashTier === dashTier) ||
+      (hlsTier && rep.hlsTier === hlsTier) ||
+      (rep.daiId && pathname.includes(`/variant/${rep.daiId}/`)));
+    let bitrate = positiveNumber(request.cmcd.br);
+    let bitrateSource = bitrate ? 'stream' : null;
+    let matches = directoryMatches;
+    if (!matches.length && pathResolution) {
+      matches = representations.filter(rep => rep.height === Number.parseInt(pathResolution, 10));
+    }
+    const heights = [...new Set(matches.map(rep => rep.height))];
+    let resolution = heights.length === 1 ? `${heights[0]}p` : pathResolution;
     let isEstimated = false;
-    let exactBandwidth = null;
-    let telemetryConflictsWithPath = false;
-    let source = options.rewritten ? (targetSource || 'inferred') : 'inferred';
-
-    // Use the rewrite target directly when available so the UI reflects the
-    // negotiated representation rather than an older path segment.
-    if (Number.isFinite(targetHeight)) {
-      resolution = `${targetHeight}p`;
-      exactBandwidth = Number.isFinite(targetBitrateKbps)
-        ? targetBitrateKbps * 1000
-        : null;
-      isEstimated = false;
-      source = targetSource || 'inferred';
-    }
-
-    let bitrate = null;
-    let maxBitrate = null;
-
-    if (cmcdParam) {
-      bitrate = Number.parseInt(request.cmcd.br, 10) || null;
-      maxBitrate = Number.parseInt(request.cmcd.tb, 10) || null;
-    }
-
-    const manifestMaxBandwidth = availableRepresentations.reduce((maximum, rep) =>
-      Number.isFinite(rep.bandwidth) ? Math.max(maximum, rep.bandwidth) : maximum, 0);
-    if (manifestMaxBandwidth > 0) {
-      // Live CMCD `tb` is sometimes stale (or even drops to the current `br`)
-      // after URL rewriting. The active manifest is the authoritative ladder.
-      maxBitrate = Math.round(manifestMaxBandwidth / 1000);
-    }
-
-    const hlsTierMatch = pathname.match(/manifest(?:_video)?_(\d+)[_\/]/);
-    const dashTierMatch = pathname.match(/_(\d{3,5})\/(?:seg_|init)/i);
-    const requestedTier = dashTierMatch ? toNumber(dashTierMatch[1]) : null;
-
-    if (!resolution && availableRepresentations.length > 0) {
-      const bitrateMatch = bitrate ? matchRepresentationByBitrate(availableRepresentations, bitrate) : null;
-      const pathMatches = pathResolution
-        ? availableRepresentations.filter(r => r.height === pathResolution)
-        : [];
-      const pathMatch = pathMatches[0];
-      const tierMatch = availableRepresentations.find(r =>
-        (dashTierMatch && r.dashTier === dashTierMatch[1]) ||
-        (hlsTierMatch && (r.hlsTier === hlsTierMatch[1] || r.rawId === hlsTierMatch[1])));
-      // A representation directory is the media actually requested. CMCD can
-      // lag during switches, so use bitrate matching only when the path does
-      // not identify a known representation.
-      telemetryConflictsWithPath = Boolean(
-        (pathMatch && bitrateMatch && bitrateMatch.height !== pathMatch.height) ||
-        (tierMatch && bitrate && Math.abs(tierMatch.bandwidth - bitrate * 1000) > Math.max(75000, tierMatch.bandwidth * 0.05)));
-      const manifestMatch = tierMatch || pathMatch || bitrateMatch;
-
-      if (manifestMatch) {
-        resolution = `${manifestMatch.height}p`;
-        const matchedRate = tierMatch || (bitrateMatch?.height === manifestMatch.height ? bitrateMatch : null);
-        const pathBandwidths = [...new Set(pathMatches.map(r => r.bandwidth).filter(Boolean))];
-        // Resolution alone cannot identify a bitrate when several variants share it.
-        exactBandwidth = matchedRate?.bandwidth || (pathBandwidths.length === 1 ? pathBandwidths[0] : null);
-        isEstimated = false;
-        source = 'manifest';
-      }
-    }
-
-    if (!resolution && resolutionMatch) {
-      resolution = resolutionMatch;
-      isEstimated = false;
-    }
-
-    if (!resolution && dashTierMatch) {
-      const match = availableRepresentations.find(r => r.dashTier === dashTierMatch[1]);
-      if (match) {
-        resolution = match.height + 'p';
-        exactBandwidth = match.bandwidth;
-        isEstimated = false;
-        source = 'manifest';
-      } else {
-        resolution = estimateResolutionFromBitrate(requestedTier);
-        isEstimated = true;
-      }
-    }
-
-    // --- Hybrid HLS/DASH manifest_video Mapping ---
-    if (!resolution && hlsTierMatch) {
-      const tier = hlsTierMatch[1];
-      const match = availableRepresentations.find(r => r.hlsTier === tier || r.rawId === tier);
-      if (match) {
-        resolution = match.height + 'p';
-        exactBandwidth = match.bandwidth;
-        isEstimated = false;
-        source = 'manifest';
-      }
-    }
-
-    // --- Google DAI Fallback ---
-    if (!resolution && availableRepresentations.length > 0) {
-      const match = availableRepresentations.find(r => r.daiId && pathname.includes(r.daiId));
-      if (match) {
-        resolution = match.height + 'p';
-        exactBandwidth = match.bandwidth;
-        isEstimated = false;
-        source = 'manifest';
-      }
-    }
-
-    // Fallback: use bitrate when no exact directory/manifest match exists.
     if (!resolution && bitrate) {
-      resolution = estimateResolutionFromBitrate(bitrate);
-      isEstimated = true;
+      // A rounded CMCD rate can identify a declared rendition, but its height
+      // is still an estimate until the decoder reports the actual dimensions.
+      const rateMatches = representations.filter(rep =>
+        Math.abs(rep.bandwidth - bitrate * 1000) <= Math.max(75000, rep.bandwidth * 0.05));
+      const rateHeights = [...new Set(rateMatches.map(rep => rep.height))];
+      if (rateHeights.length === 1) { resolution = `${rateHeights[0]}p`; isEstimated = true; }
     }
-
-    if (resolution || bitrate || exactBandwidth) {
-      let finalBitrate = telemetryConflictsWithPath ? null : bitrate;
-      // CMCD belongs to the player's original request and intentionally stays
-      // unchanged on a rewritten URL. Once that rewrite succeeds, report the
-      // target representation instead of the now-stale CMCD `br` value.
-      if (options.rewritten && exactBandwidth) {
-        finalBitrate = Math.round(exactBandwidth / 1000);
-      } else if (options.rewritten && Number.isFinite(targetBitrateKbps)) {
-        finalBitrate = targetBitrateKbps;
-      } else if (options.rewritten && requestedTier) {
-        finalBitrate = requestedTier;
-      } else if (telemetryConflictsWithPath && exactBandwidth) {
-        finalBitrate = Math.round(exactBandwidth / 1000);
-      } else if (!finalBitrate && exactBandwidth) {
-        finalBitrate = Math.round(exactBandwidth / 1000);
-      } else if (!finalBitrate && requestedTier) {
-        finalBitrate = requestedTier;
-      }
-
-      window.postMessage({
-        type: 'PMR_QUALITY_DATA',
-        payload: {
-          resolution,
-          isEstimated,
-          bitrate: finalBitrate,
-          maxBitrate,
-          source,
-          streamKey: deriveStreamKey(urlObj),
-          rewritten: options.rewritten === true,
-          observationSequence: toNumber(options.observationSequence),
-          timestamp: Date.now()
-        }
-      }, '*');
+    const bandwidths = [...new Set(matches.map(rep => rep.bandwidth))];
+    const advertised = bandwidths.length === 1 ? bandwidths[0] / 1000 : null;
+    if (advertised && (!bitrate || (directoryMatches.length &&
+        Math.abs(advertised - bitrate) > Math.max(75, advertised * 0.05)))) {
+      bitrate = advertised;
+      bitrateSource = 'manifest';
     }
-  } catch (e) {
-    console.error('[PMR_QUALITY] Error analyzing URL:', e);
-  }
+    if (!resolution && !bitrate) return;
+    window.postMessage({ type: 'PMR_QUALITY_DATA', payload: {
+      resolution, bitrate, bitrateSource, isEstimated,
+      streamKey: deriveStreamKey(request.url), observationSequence, timestamp: Date.now()
+    } }, location.origin);
+  } catch { /* Telemetry failure must leave playback unchanged. */ }
 }
