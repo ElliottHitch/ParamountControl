@@ -4,11 +4,11 @@ A Chrome and Edge extension for Paramount+.
 
 ## What it does
 
-### Menu removal
+#### Menu removal
 
   Removes the video sidebar when it appears. Turn the switch off to bring the menu back.
 
-### Quality selection
+#### Quality selection
 
 Paramount lists the qualities available for each video. The extension limits
 which ones the player can choose. The player still downloads and plays the original streams.
