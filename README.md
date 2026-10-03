@@ -1,4 +1,4 @@
-# Paramount Menu Remover
+# Paramount Control+
 
 Unofficial browser extension for Chrome and Edge with a popup for the Paramount+
 playback menu, streaming quality, and bitrate.
